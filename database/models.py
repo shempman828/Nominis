@@ -33,8 +33,28 @@ class Name(Base):
     skip_count = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # Slot-agnostic reputation — incremented whenever any combo
+    # containing this name (as first OR middle) wins or loses.
+    rep_wins = Column(Integer, default=0, nullable=False)
+    rep_losses = Column(Integer, default=0, nullable=False)
+
+    @property
+    def reputation(self) -> float:
+        """
+        Score in roughly [0.2, 2.0].
+          Neutral (no matches) → 1.0
+          Pure winner          → approaches 2.0
+          Pure loser           → approaches 0.2
+        Uses Laplace smoothing so new names start neutral.
+        """
+        total = self.rep_wins + self.rep_losses
+        if total == 0:
+            return 1.0
+        win_rate = (self.rep_wins + 1) / (total + 2)  # Laplace smoothed
+        return 0.2 + 1.8 * win_rate  # map [0,1] → [0.2, 2.0]
+
     def __repr__(self):
-        return f"<Name {self.text!r} ({self.gender.value})>"
+        return f"<Name {self.text!r} ({self.gender.value}) rep={self.reputation:.2f}>"
 
 
 class Profile(Base):
@@ -57,6 +77,10 @@ class NameCombo(Base):
     """
     An ordered (first, middle) name pair ranked per profile.
     'George Alabaster' and 'Alabaster George' are distinct rows.
+
+    streak > 0  →  consecutive wins  (hot, fast-tracked upward)
+    streak < 0  →  consecutive losses (cold, soft-suppressed)
+    streak = 0  →  neutral
     """
 
     __tablename__ = "name_combos"
@@ -67,6 +91,7 @@ class NameCombo(Base):
     middle_id = Column(Integer, ForeignKey("names.id"), nullable=False)
     elo_score = Column(Float, default=1000.0, nullable=False)
     match_count = Column(Integer, default=0, nullable=False)
+    streak = Column(Integer, default=0, nullable=False)
 
     __table_args__ = (
         UniqueConstraint("profile_id", "first_id", "middle_id", name="uq_combo"),
@@ -77,7 +102,11 @@ class NameCombo(Base):
     middle = relationship("Name", foreign_keys=[middle_id])
 
     def __repr__(self):
-        return f"<NameCombo profile={self.profile_id} first={self.first_id} middle={self.middle_id} elo={self.elo_score:.1f}>"
+        return (
+            f"<NameCombo profile={self.profile_id} "
+            f"first={self.first_id} middle={self.middle_id} "
+            f"elo={self.elo_score:.1f} streak={self.streak}>"
+        )
 
 
 class Match(Base):
