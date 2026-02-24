@@ -1,16 +1,27 @@
 """Add names screen — single add + batch import."""
+
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QLineEdit, QPlainTextEdit,
-    QButtonGroup, QRadioButton, QFrame, QSizePolicy
+    QButtonGroup,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPlainTextEdit,
+    QPushButton,
+    QRadioButton,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Qt
+
 from database.db import get_session
-from database.models import Name, ProfileName, Gender
+from database.models import Gender, Name, ProfileName
 from styles.theme import COLORS
 
-
-GENDER_OPTIONS = [("♂ Masculine", Gender.M), ("♀ Feminine", Gender.F), ("⚥ Neutral", Gender.N)]
+GENDER_OPTIONS = [
+    ("♂ Masculine", Gender.M),
+    ("♀ Feminine", Gender.F),
+    ("⚥ Neutral", Gender.N),
+]
 
 
 class AddNamesScreen(QWidget):
@@ -112,7 +123,7 @@ class AddNamesScreen(QWidget):
         group = QButtonGroup()
         for i, (lbl_text, g) in enumerate(GENDER_OPTIONS):
             rb = QRadioButton(lbl_text)
-            rb.setChecked(i == 2)   # default Neutral
+            rb.setChecked(i == 2)  # default Neutral
             group.addButton(rb, i)
             layout.addWidget(rb)
         return {"layout": layout, "group": group}
@@ -135,11 +146,11 @@ class AddNamesScreen(QWidget):
             self._single_input.clear()
 
     def _add_batch(self):
-        raw     = self._batch_input.toPlainText().strip()
-        lines   = [l.strip() for l in raw.splitlines() if l.strip()]
+        raw = self._batch_input.toPlainText().strip()
+        lines = [l.strip() for l in raw.splitlines() if l.strip()]  # noqa: E741
         default = self._selected_gender(self._batch_gender)
 
-        added = skipped = errors = 0
+        added = skipped = 0
         for line in lines:
             parts = [p.strip() for p in line.rsplit(",", 1)]
             name_text = parts[0].title()
@@ -167,7 +178,7 @@ class AddNamesScreen(QWidget):
         with get_session() as s:
             existing = s.query(Name).filter(Name.text == text).first()
             if existing:
-                return False, f""{text}" already exists."
+                return False, f"\u201c{text}\u201d already exists."
             name = Name(text=text, gender=gender)
             s.add(name)
             s.flush()
@@ -175,7 +186,7 @@ class AddNamesScreen(QWidget):
             for pid in (1, 2):
                 s.add(ProfileName(profile_id=pid, name_id=name.id))
             s.commit()
-        return True, f"✓ "{text}" added."
+        return True, f"\u2713 \u201c{text}\u201d added."
 
     def refresh(self):
         pass
