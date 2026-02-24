@@ -1,7 +1,6 @@
 """Main window — tab-based shell."""
 
 from PySide6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout
-from PySide6.QtCore import Qt
 from ui.match_screen import MatchScreen
 from ui.leaderboard_screen import LeaderboardScreen
 from ui.combo_screen import ComboScreen

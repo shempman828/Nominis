@@ -8,12 +8,11 @@ from PySide6.QtWidgets import (
     QLabel,
     QButtonGroup,
     QRadioButton,
-    QFrame,
     QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer
 from database.db import get_session
-from database.models import Profile, Name, ProfileName
+from database.models import Name, ProfileName
 from logic.matchmaker import pick_pair
 from logic.elo import update_elo, record_skip
 from styles.theme import COLORS

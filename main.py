@@ -2,7 +2,6 @@
 
 import sys
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt
 from database.db import init_db
 from ui.main_window import MainWindow
 from styles.theme import STYLESHEET

@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QScrollArea,
 )
-from PySide6.QtCore import Qt
 from sqlalchemy import func
 from database.db import get_session, get_setting
 from database.models import ProfileName, Name, Gender
