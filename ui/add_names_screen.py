@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (
 )
 
 from database.db import get_session
-from database.models import Gender, Name, ProfileName
+from database.models import Gender, Name
+from logic.combogen import generate_combos_for_new_name
 from styles.theme import COLORS
 
 GENDER_OPTIONS = [
@@ -37,6 +38,12 @@ class AddNamesScreen(QWidget):
         title = QLabel("Add Names")
         title.setObjectName("h1")
         root.addWidget(title)
+
+        note = QLabel(
+            "Each name added automatically generates ordered combos with all existing names."
+        )
+        note.setObjectName("muted")
+        root.addWidget(note)
 
         # ── Quick single add ──────────────────────────────────────────────────
         single_card = QFrame()
@@ -182,11 +189,15 @@ class AddNamesScreen(QWidget):
             name = Name(text=text, gender=gender)
             s.add(name)
             s.flush()
-            # Create ProfileName rows for both profiles
-            for pid in (1, 2):
-                s.add(ProfileName(profile_id=pid, name_id=name.id))
+            new_id = name.id
             s.commit()
-        return True, f"\u2713 \u201c{text}\u201d added."
+
+        # Generate combos outside the session to avoid conflicts
+        combo_count = generate_combos_for_new_name(new_id)
+        return (
+            True,
+            f"\u2713 \u201c{text}\u201d added — {combo_count} combos generated.",
+        )
 
     def refresh(self):
         pass

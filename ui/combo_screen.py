@@ -1,6 +1,5 @@
-"""Name combo generator screen."""
+"""Name combo generator screen — shows top-ranked first+middle+surname combinations."""
 
-import random
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -15,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 from sqlalchemy import func
 from database.db import get_session, get_setting
-from database.models import ProfileName, Name, Gender
+from database.models import NameCombo, Name, Gender
 from styles.theme import COLORS
 
 
@@ -29,17 +28,14 @@ class ComboScreen(QWidget):
         root.setContentsMargins(32, 24, 32, 24)
         root.setSpacing(20)
 
-        # Header
         hdr = QHBoxLayout()
-        title = QLabel("Name Combos")
+        title = QLabel("Top Name Combos")
         title.setObjectName("h1")
         hdr.addWidget(title)
         hdr.addStretch()
         root.addLayout(hdr)
 
-        sub = QLabel(
-            "Randomly generated first · middle · last combinations drawn from top-ranked names."
-        )
+        sub = QLabel("Browse your highest-ranked first · middle · last combinations.")
         sub.setObjectName("muted")
         root.addWidget(sub)
 
@@ -47,7 +43,6 @@ class ComboScreen(QWidget):
         opts = QHBoxLayout()
         opts.setSpacing(24)
 
-        # Profile source
         opts.addWidget(QLabel("Source:"))
         self._src_group = QButtonGroup(self)
         for i, (lbl, color) in enumerate(
@@ -68,10 +63,9 @@ class ComboScreen(QWidget):
 
         opts.addSpacing(16)
 
-        # Gender filter
         opts.addWidget(QLabel("Gender:"))
         self._gen_group = QButtonGroup(self)
-        for i, lbl in enumerate(["Any", "♂", "♀", "⚥"]):
+        for i, lbl in enumerate(["Any", "♂ Masc", "♀ Fem"]):
             rb = QRadioButton(lbl)
             rb.setChecked(i == 0)
             self._gen_group.addButton(rb, i)
@@ -79,24 +73,22 @@ class ComboScreen(QWidget):
 
         opts.addSpacing(16)
 
-        # Count
-        opts.addWidget(QLabel("Count:"))
+        opts.addWidget(QLabel("Show top:"))
         self._count_spin = QSpinBox()
-        self._count_spin.setRange(1, 20)
-        self._count_spin.setValue(5)
+        self._count_spin.setRange(1, 50)
+        self._count_spin.setValue(10)
         self._count_spin.setFixedWidth(60)
         opts.addWidget(self._count_spin)
 
         opts.addStretch()
 
-        gen_btn = QPushButton("Generate  ✨")
+        gen_btn = QPushButton("Refresh  ✨")
         gen_btn.setObjectName("primary")
         gen_btn.clicked.connect(self._generate)
         opts.addWidget(gen_btn)
 
         root.addLayout(opts)
 
-        # Scroll area for results
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.NoFrame)
@@ -109,7 +101,7 @@ class ComboScreen(QWidget):
         root.addWidget(self._scroll, stretch=1)
 
     def refresh(self):
-        pass  # no auto-refresh needed
+        self._generate()
 
     def _generate(self):
         # Clear old results
@@ -119,17 +111,17 @@ class ComboScreen(QWidget):
                 item.widget().deleteLater()
 
         surname = get_setting("surname") or "Smith"
-        src_id = self._src_group.checkedId()  # 0=Husband,1=Wife,2=Combined
-        gen_id = self._gen_group.checkedId()  # 0=Any,1=M,2=F,3=N
+        src_id = self._src_group.checkedId()  # 0=Husband, 1=Wife, 2=Combined
+        gen_id = self._gen_group.checkedId()  # 0=Any, 1=M, 2=F
         count = self._count_spin.value()
 
-        gender_map = {0: None, 1: Gender.M, 2: Gender.F, 3: Gender.N}
-        gender = gender_map[gen_id]
+        gender_mode_map = {0: None, 1: "M", 2: "F"}
+        gender_mode = gender_mode_map[gen_id]
 
-        pool = self._get_pool(src_id, gender)
+        combos = self._get_top_combos(src_id, gender_mode, count)
 
-        if len(pool) < 2:
-            lbl = QLabel("Not enough names — add more or adjust filters.")
+        if not combos:
+            lbl = QLabel("No combos yet — add names and start voting!")
             lbl.setObjectName("muted")
             self._results_layout.insertWidget(0, lbl)
             return
@@ -137,43 +129,65 @@ class ComboScreen(QWidget):
         colors = [COLORS["blue"], COLORS["pink"], COLORS["laven"]]
         color = colors[src_id]
 
-        for i in range(count):
-            first, middle = random.sample(pool, 2)
-            combo = f"{first}  {middle}  {surname}"
-            card = self._make_card(i + 1, combo, color)
+        for i, (first, middle, elo) in enumerate(combos):
+            full = f"{first}  {middle}  {surname}"
+            card = self._make_card(i + 1, full, f"{elo:.0f}", color)
             self._results_layout.insertWidget(i, card)
 
-    def _get_pool(self, src_id: int, gender: Gender | None) -> list[str]:
-        """Return top-ranked names for the selected source."""
+    def _eligible_ids(self, s, mode: str | None) -> set[int] | None:
+        if mode == "M":
+            genders = [Gender.M, Gender.N]
+        elif mode == "F":
+            genders = [Gender.F, Gender.N]
+        else:
+            return None  # no filter
+        return {n.id for n in s.query(Name).filter(Name.gender.in_(genders)).all()}
+
+    def _get_top_combos(
+        self, src_id: int, gender_mode: str | None, limit: int
+    ) -> list[tuple[str, str, float]]:
         with get_session() as s:
+            eligible = self._eligible_ids(s, gender_mode)
+
             if src_id == 2:  # Combined
-                q = (
-                    s.query(Name.text, func.avg(ProfileName.elo_score).label("avg_elo"))
-                    .join(ProfileName, ProfileName.name_id == Name.id)
-                    .filter(ProfileName.profile_id.in_([1, 2]))
-                )
-                if gender:
-                    q = q.filter(Name.gender == gender)
+                q = s.query(
+                    NameCombo.first_id,
+                    NameCombo.middle_id,
+                    func.avg(NameCombo.elo_score).label("avg_elo"),
+                ).filter(NameCombo.profile_id.in_([1, 2]))
+                if eligible is not None:
+                    q = q.filter(
+                        NameCombo.first_id.in_(eligible),
+                        NameCombo.middle_id.in_(eligible),
+                    )
                 rows = (
-                    q.group_by(Name.id)
-                    .order_by(func.avg(ProfileName.elo_score).desc())
-                    .limit(30)
+                    q.group_by(NameCombo.first_id, NameCombo.middle_id)
+                    .order_by(func.avg(NameCombo.elo_score).desc())
+                    .limit(limit)
                     .all()
                 )
-                return [r[0] for r in rows]
             else:
                 pid = src_id + 1  # 0→1 (Husband), 1→2 (Wife)
-                q = (
-                    s.query(Name.text)
-                    .join(ProfileName, ProfileName.name_id == Name.id)
-                    .filter(ProfileName.profile_id == pid)
-                )
-                if gender:
-                    q = q.filter(Name.gender == gender)
-                rows = q.order_by(ProfileName.elo_score.desc()).limit(30).all()
-                return [r[0] for r in rows]
+                q = s.query(
+                    NameCombo.first_id,
+                    NameCombo.middle_id,
+                    NameCombo.elo_score,
+                ).filter(NameCombo.profile_id == pid)
+                if eligible is not None:
+                    q = q.filter(
+                        NameCombo.first_id.in_(eligible),
+                        NameCombo.middle_id.in_(eligible),
+                    )
+                rows = q.order_by(NameCombo.elo_score.desc()).limit(limit).all()
 
-    def _make_card(self, rank: int, combo: str, color: str) -> QFrame:
+            result = []
+            for first_id, middle_id, elo in rows:
+                fn = s.get(Name, first_id)
+                mn = s.get(Name, middle_id)
+                result.append((fn.text, mn.text, float(elo)))
+        return result
+
+    def _make_card(self, rank: int, combo: str, elo: str, color: str) -> QFrame:
         card = QFrame()
         card.setObjectName("card")
         layout = QHBoxLayout(card)
@@ -181,7 +195,7 @@ class ComboScreen(QWidget):
 
         num = QLabel(str(rank))
         num.setStyleSheet(
-            f"color: {COLORS['muted']}; font-size: 13px; min-width: 24px;"
+            f"color: {COLORS['muted']}; font-size: 13px; min-width: 28px;"
         )
         layout.addWidget(num)
 
@@ -190,5 +204,9 @@ class ComboScreen(QWidget):
             f"color: {color}; font-size: 20px; font-weight: bold; letter-spacing: 2px;"
         )
         layout.addWidget(name_lbl, stretch=1)
+
+        elo_lbl = QLabel(f"Elo {elo}")
+        elo_lbl.setStyleSheet(f"color: {COLORS['muted']}; font-size: 12px;")
+        layout.addWidget(elo_lbl)
 
         return card

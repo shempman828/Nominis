@@ -1,7 +1,7 @@
-"""Elo rating logic."""
+"""Elo rating logic — operates on NameCombo rows."""
 
 from database.db import get_session, get_setting
-from database.models import ProfileName, Match
+from database.models import NameCombo, Match
 
 
 def _k(match_count: int) -> float:
@@ -15,65 +15,51 @@ def expected(ra: float, rb: float) -> float:
     return 1.0 / (1.0 + 10 ** ((rb - ra) / 400.0))
 
 
-def update_elo(profile_id: int, winner_id: int, loser_id: int):
+def update_elo(profile_id: int, winner_combo_id: int, loser_combo_id: int):
     """Apply Elo update for a completed match and record it."""
     with get_session() as s:
-        w_pn = (
-            s.query(ProfileName)
-            .filter_by(profile_id=profile_id, name_id=winner_id)
-            .first()
-        )
-        l_pn = (
-            s.query(ProfileName)
-            .filter_by(profile_id=profile_id, name_id=loser_id)
-            .first()
-        )
+        w = s.get(NameCombo, winner_combo_id)
+        l = s.get(NameCombo, loser_combo_id)  # noqa: E741
 
-        if not w_pn or not l_pn:
+        if not w or not l:
             return
 
-        ea = expected(w_pn.elo_score, l_pn.elo_score)
-        eb = expected(l_pn.elo_score, w_pn.elo_score)
+        ea = expected(w.elo_score, l.elo_score)
+        eb = expected(l.elo_score, w.elo_score)
 
-        kw = _k(w_pn.match_count)
-        kl = _k(l_pn.match_count)
+        kw = _k(w.match_count)
+        kl = _k(l.match_count)
 
-        w_pn.elo_score += kw * (1.0 - ea)
-        l_pn.elo_score += kl * (0.0 - eb)
-        w_pn.match_count += 1
-        l_pn.match_count += 1
+        w.elo_score += kw * (1.0 - ea)
+        l.elo_score += kl * (0.0 - eb)
+        w.match_count += 1
+        l.match_count += 1
 
         s.add(
             Match(
                 profile_id=profile_id,
-                winner_id=winner_id,
-                loser_id=loser_id,
+                winner_combo_id=winner_combo_id,
+                loser_combo_id=loser_combo_id,
                 was_skip=False,
             )
         )
         s.commit()
 
 
-def record_skip(profile_id: int, name_a_id: int, name_b_id: int):
-    """Record a skip — increment skip counts, no Elo change."""
+def record_skip(profile_id: int, combo_a_id: int, combo_b_id: int):
+    """Record a skip — nudge match_count down so combos stay in rotation."""
     with get_session() as s:
-        for nid in (name_a_id, name_b_id):
-            name = (
-                s.query(ProfileName)
-                .filter_by(profile_id=profile_id, name_id=nid)
-                .first()
-            )
-            if name:
-                # Re-queue: nudge match_count down slightly so they stay active
-                name.match_count = max(0, name.match_count - 1)
-
-            from database.models import Name
-
-            nm = s.get(Name, nid)
-            if nm:
-                nm.skip_count += 1
+        for cid in (combo_a_id, combo_b_id):
+            combo = s.get(NameCombo, cid)
+            if combo:
+                combo.match_count = max(0, combo.match_count - 1)
 
         s.add(
-            Match(profile_id=profile_id, winner_id=None, loser_id=None, was_skip=True)
+            Match(
+                profile_id=profile_id,
+                winner_combo_id=None,
+                loser_combo_id=None,
+                was_skip=True,
+            )
         )
         s.commit()

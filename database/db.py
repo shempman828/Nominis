@@ -14,6 +14,10 @@ SessionLocal = None
 def init_db():
     global engine, SessionLocal
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # Wipe and recreate cleanly
+    db_file = DB_PATH
+    if db_file.exists():
+        db_file.unlink()
     engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine)
@@ -36,11 +40,11 @@ def _seed_defaults():
             )
         defaults = {
             "surname": "Smith",
-            "match_random_pct": "30",  # % chance of distal match
-            "elo_spread_thresh": "50",  # std dev before blended matching kicks in
+            "match_random_pct": "30",
+            "elo_spread_thresh": "50",
             "k_factor_default": "32",
             "k_factor_stable": "16",
-            "k_stable_threshold": "20",  # match_count before reduced K
+            "k_stable_threshold": "20",
         }
         for k, v in defaults.items():
             if not s.get(Setting, k):

@@ -1,37 +1,37 @@
-"""Leaderboard screen — top 10 per profile + combined."""
+"""Leaderboard screen — top combos per profile + combined."""
 
-from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QTableWidget,
-    QTableWidgetItem,
-    QPushButton,
-    QButtonGroup,
-    QAbstractItemView,
-    QHeaderView,
-)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QButtonGroup,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 from sqlalchemy import func
-from database.db import get_session
-from database.models import ProfileName, Name, Gender
+
+from database.db import get_session, get_setting
+from database.models import Gender, Name, NameCombo
 from styles.theme import COLORS
 
 GENDER_LABELS = {
     "All": None,
-    "♂ Masc": Gender.M,
-    "♀ Fem": Gender.F,
-    "⚥ Neutral": Gender.N,
+    "♂ Masc": "M",
+    "♀ Fem": "F",
 }
-TOP_N = 10
+TOP_N = 15
 
 
 class LeaderboardScreen(QWidget):
     def __init__(self):
         super().__init__()
-        self._gender_filter: Gender | None = None
+        self._gender_filter: str | None = None  # "M", "F", or None
         self._build_ui()
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -63,20 +63,30 @@ class LeaderboardScreen(QWidget):
 
         root.addLayout(hdr)
 
+        subtitle = QLabel("Rankings show first · middle name combinations.")
+        subtitle.setObjectName("muted")
+        root.addWidget(subtitle)
+
         # Three-column table layout
         cols = QHBoxLayout()
         cols.setSpacing(16)
 
-        self._tbl_husband = self._make_table("Husband", COLORS["blue"])
-        self._tbl_wife = self._make_table("Wife", COLORS["pink"])
-        self._tbl_combined = self._make_table("Combined", COLORS["laven"])
+        # NOTE: store table widgets directly — avoid name collision with containers
+        self._tbl_husband = self._make_table_section("Husband", COLORS["blue"])
+        self._tbl_wife = self._make_table_section("Wife", COLORS["pink"])
+        self._tbl_combined = self._make_table_section("Combined", COLORS["laven"])
 
-        for tbl_widget in (self._tbl_husband, self._tbl_wife, self._tbl_combined):
-            cols.addWidget(tbl_widget)
+        for container in (
+            self._container_husband,
+            self._container_wife,
+            self._container_combined,
+        ):
+            cols.addWidget(container)
 
         root.addLayout(cols, stretch=1)
 
-    def _make_table(self, heading: str, color: str) -> QWidget:
+    def _make_table_section(self, heading: str, color: str) -> QTableWidget:
+        """Create a labeled table section. Returns the QTableWidget; stores container."""
         container = QWidget()
         vbox = QVBoxLayout(container)
         vbox.setContentsMargins(0, 0, 0, 0)
@@ -86,21 +96,21 @@ class LeaderboardScreen(QWidget):
         lbl.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 15px;")
         vbox.addWidget(lbl)
 
-        tbl = QTableWidget(0, 3)
-        tbl.setHorizontalHeaderLabels(["#", "Name", "Elo"])
+        tbl = QTableWidget(0, 4)
+        tbl.setHorizontalHeaderLabels(["#", "First", "Middle", "Elo"])
         tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
         tbl.setSelectionMode(QAbstractItemView.NoSelection)
         tbl.setFocusPolicy(Qt.NoFocus)
-        tbl.setObjectName("leaderboard_table")
         vbox.addWidget(tbl)
 
-        # store reference by heading
-        setattr(self, f"_tbl_{heading.lower()}", tbl)
-        return container
+        # Store container separately from the table widget
+        setattr(self, f"_container_{heading.lower()}", container)
+        return tbl
 
     # ── Data ──────────────────────────────────────────────────────────────────
 
@@ -110,59 +120,106 @@ class LeaderboardScreen(QWidget):
         self._populate(self._tbl_wife, self._get_top(2, g), COLORS["pink"])
         self._populate(self._tbl_combined, self._get_combined(g), COLORS["laven"])
 
-    def _get_top(
-        self, profile_id: int, gender: Gender | None
-    ) -> list[tuple[str, float]]:
-        with get_session() as s:
-            q = (
-                s.query(Name.text, ProfileName.elo_score)
-                .join(ProfileName, ProfileName.name_id == Name.id)
-                .filter(ProfileName.profile_id == profile_id)
-            )
-            if gender:
-                q = q.filter(Name.gender == gender)
-            rows = q.order_by(ProfileName.elo_score.desc()).limit(TOP_N).all()
-        return [(r[0], r[1]) for r in rows]
+    def _eligible_gender_values(self, mode: str | None):
+        """Return Gender enum values eligible for a mode filter."""
+        if mode == "M":
+            return [Gender.M, Gender.N]
+        elif mode == "F":
+            return [Gender.F, Gender.N]
+        return None  # no filter
 
-    def _get_combined(self, gender: Gender | None) -> list[tuple[str, float]]:
-        """Average Elo across both profiles."""
+    def _get_top(
+        self, profile_id: int, mode: str | None
+    ) -> list[tuple[str, str, float]]:
+        eligible = self._eligible_gender_values(mode)
         with get_session() as s:
-            q = (
-                s.query(Name.text, func.avg(ProfileName.elo_score).label("avg_elo"))
-                .join(ProfileName, ProfileName.name_id == Name.id)
-                .filter(ProfileName.profile_id.in_([1, 2]))
-            )
-            if gender:
-                q = q.filter(Name.gender == gender)
+            Name.__table__.alias("first_name")
+            Name.__table__.alias("middle_name")
+
+            q = s.query(
+                NameCombo.first_id,
+                NameCombo.middle_id,
+                NameCombo.elo_score,
+            ).filter(NameCombo.profile_id == profile_id)
+
+            if eligible:
+                first_ids = {
+                    n.id for n in s.query(Name).filter(Name.gender.in_(eligible)).all()
+                }
+                q = q.filter(
+                    NameCombo.first_id.in_(first_ids),
+                    NameCombo.middle_id.in_(first_ids),
+                )
+
+            rows = q.order_by(NameCombo.elo_score.desc()).limit(TOP_N).all()
+
+            result = []
+            for first_id, middle_id, elo in rows:
+                fn = s.get(Name, first_id)
+                mn = s.get(Name, middle_id)
+                result.append((fn.text, mn.text, elo))
+        return result
+
+    def _get_combined(self, mode: str | None) -> list[tuple[str, str, float]]:
+        """Average Elo across both profiles."""
+        eligible = self._eligible_gender_values(mode)
+        with get_session() as s:
+            q = s.query(
+                NameCombo.first_id,
+                NameCombo.middle_id,
+                func.avg(NameCombo.elo_score).label("avg_elo"),
+            ).filter(NameCombo.profile_id.in_([1, 2]))
+
+            if eligible:
+                eligible_ids = {
+                    n.id for n in s.query(Name).filter(Name.gender.in_(eligible)).all()
+                }
+                q = q.filter(
+                    NameCombo.first_id.in_(eligible_ids),
+                    NameCombo.middle_id.in_(eligible_ids),
+                )
+
             rows = (
-                q.group_by(Name.id)
-                .order_by(func.avg(ProfileName.elo_score).desc())
+                q.group_by(NameCombo.first_id, NameCombo.middle_id)
+                .order_by(func.avg(NameCombo.elo_score).desc())
                 .limit(TOP_N)
                 .all()
             )
-        return [(r[0], r[1]) for r in rows]
 
-    def _populate(self, tbl: QTableWidget, rows: list[tuple[str, float]], color: str):
+            result = []
+            for first_id, middle_id, avg_elo in rows:
+                fn = s.get(Name, first_id)
+                mn = s.get(Name, middle_id)
+                result.append((fn.text, mn.text, avg_elo))
+        return result
+
+    def _populate(
+        self, tbl: QTableWidget, rows: list[tuple[str, str, float]], color: str
+    ):
         tbl.setRowCount(0)
-        for rank, (name_text, elo) in enumerate(rows, 1):
+        get_setting("surname") or "Smith"
+        for rank, (first, middle, elo) in enumerate(rows, 1):
             tbl.insertRow(rank - 1)
             rank_item = QTableWidgetItem(str(rank))
             rank_item.setTextAlignment(Qt.AlignCenter)
-            name_item = QTableWidgetItem(name_text)
+            first_item = QTableWidgetItem(first)
+            middle_item = QTableWidgetItem(middle)
             elo_item = QTableWidgetItem(f"{elo:.0f}")
             elo_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
             if rank == 1:
-                for item in (rank_item, name_item, elo_item):
+                for item in (rank_item, first_item, middle_item, elo_item):
                     item.setForeground(QColor(color))
+
             tbl.setItem(rank - 1, 0, rank_item)
-            tbl.setItem(rank - 1, 1, name_item)
-            tbl.setItem(rank - 1, 2, elo_item)
+            tbl.setItem(rank - 1, 1, first_item)
+            tbl.setItem(rank - 1, 2, middle_item)
+            tbl.setItem(rank - 1, 3, elo_item)
 
     # ── Filters ───────────────────────────────────────────────────────────────
 
-    def _set_gender(self, gender: Gender | None, btn: QPushButton):
-        self._gender_filter = gender
-        # Update chip styles
+    def _set_gender(self, mode: str | None, btn: QPushButton):
+        self._gender_filter = mode
         for b in self._filter_group.buttons():
             b.setStyleSheet(self._chip_style(b is btn))
         self.refresh()
