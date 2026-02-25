@@ -1,7 +1,7 @@
 """Elo rating logic — operates on NameCombo rows, also updates Name reputation."""
 
 from database.db import get_session, get_setting
-from database.models import NameCombo, Name, Match
+from database.models import Match, Name, NameCombo
 
 
 def _k(match_count: int) -> float:

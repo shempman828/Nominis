@@ -1,19 +1,20 @@
 """SQLAlchemy ORM models for Nominis."""
 
+import enum
 from datetime import datetime
+
 from sqlalchemy import (
+    Boolean,
     Column,
+    DateTime,
+    Float,
+    ForeignKey,
     Integer,
     String,
-    Float,
-    Boolean,
-    ForeignKey,
-    DateTime,
     UniqueConstraint,
-    Enum as SAEnum,
 )
-from sqlalchemy.orm import relationship, declarative_base
-import enum
+from sqlalchemy import Enum as SAEnum
+from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 

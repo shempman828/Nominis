@@ -29,9 +29,9 @@ Dark horse
 
 import random
 import statistics
-from database.db import get_session, get_setting
-from database.models import NameCombo, Name, Gender
 
+from database.db import get_session, get_setting
+from database.models import Gender, Name, NameCombo
 
 # ── Gender helpers ─────────────────────────────────────────────────────────────
 
